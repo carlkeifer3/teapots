@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+		<title>three.js webgl - teapot buffer geometry</title>
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<style>
+			body {
+				color: #fff;
+				font-family: Monospace;
+				font-size: 13px;
+				text-align: center;
+				font-weight: bold;
+
+				background-color: #000;
+				margin: 0px;
+				overflow: hidden;
+			}
+			a { color: blue; }
+
+		</style>
+	</head>
+	<body>
+		<div id="WebGLContainer"></div>
+		<script src="js/three.js"></script>
+
+		<script src="js/WebVR.js"></script>
+		<script src="js/effects/VREffect.js"></script>
+		<script src="js/controls/VRControls.js"></script>
+
+    <script src="js/modifiers/ExplodeModifier.js"></script>
+    <script src="js/libs/tween.js"></script>
+
+		<script src="js/Detector.js"></script>
+
+		<script src='js/libs/dat.gui.min.js'></script>
+
+		<script src='js/geometries/TeapotBufferGeometry.js'></script>
+
+		<script>
+
+			////////////////////////////////////////////////////////////////////////////////
+			// Utah/Newell Teapot demo
+			// teapots will explode when clicked
+			////////////////////////////////////////////////////////////////////////////////
+			/*global THREE, Detector, container, dat, window */
+
+			if ( ! Detector.webgl ) Detector.addGetWebGLMessage();
+
+			var camera, scene, renderer;
+			var controls;
+			var party;
+
+			var clock = new THREE.Clock();
+
+			var raycaster;
+			var mouse;
+
+			var uiCont;
+			var teapotSize = 400;
+			var ambientLight, light;
+			var skybox;
+			var shading;
+			var wireMaterial, phongMaterial;
+			var exploded;
+			var fire;
+
+			// allocate these just once
+			var diffuseColor = new THREE.Color();
+			var specularColor = new THREE.Color();
+
+			init();
+			render();
+			animate();
+
+			function init()
+			{
+				fire = true;
+				raycaster = new THREE.Raycaster();
+				mouse = new THREE.Vector2();
+
+				container = document.getElementById('WebGLContainer');
+				document.body.appendChild( container );
+
+				var canvasWidth = window.innerWidth;
+				var canvasHeight = window.innerHeight;
+
+				// CAMERA
+				camera = new THREE.PerspectiveCamera( 45, window.innerWidth / window.innerHeight, 1, 80000 );
+				camera.position.set( -600, 550, 1300 );
+
+				// LIGHTS
+				ambientLight = new THREE.AmbientLight( 0x333333 );	// 0.2
+				ambientLight.position.set(0,0,0);
+
+				light = new THREE.DirectionalLight( 0xFFFFFF, 1.0 );
+				light.position.set( 600, 900, 400).multiplyScalar(1.1);
+
+				// RENDERER
+				renderer = new THREE.WebGLRenderer( { antialias: true } );
+				renderer.setClearColor( 0x555555 );
+				renderer.setPixelRatio( window.devicePixelRatio );
+				renderer.setSize( canvasWidth, canvasHeight );
+				renderer.gammaInput = true;
+				renderer.gammaOutput = true;
+				container.appendChild( renderer.domElement );
+
+				// EVENTS
+				window.addEventListener( 'resize', onWindowResize, false );
+				renderer.domElement.addEventListener( 'mousedown', onMouseDown, false );
+
+
+				// CONTROLS
+				controls = new THREE.VRControls( camera );
+
+				// MATERIALS
+				var materialColor = new THREE.Color();
+				materialColor.setRGB( 1.0, 1.0, 1.0 );
+
+				wireMaterial = new THREE.MeshBasicMaterial( { color: 0xFFFFFF, wireframe: true } ) ;
+
+				// scene itself
+				scene = new THREE.Scene();
+
+				scene.add( ambientLight );
+				scene.add( light );
+
+				// GUI
+				addUI();
+
+				// create teapots
+				newTeapot();
+			}
+
+			// EVENT HANDLERS
+
+			function onMouseDown()
+			{
+				//console.log("--onMouseDown detected");
+				event.preventDefault();
+
+				mouse.x = ( event.clientX / renderer.domElement.clientWidth ) * 2 - 1;
+				mouse.y = - ( event.clientY / renderer.domElement.clientHeight ) * 2 + 1;
+
+				//console.log("Mouse X: "+mouse.x);
+				//console.log("Mouse Y: "+mouse.y);
+
+				raycaster.setFromCamera( mouse, camera );
+
+				var intersects = raycaster.intersectObjects( scene.children );
+
+				if ( intersects.length > 0 && fire === true) {
+					//console.log("hit detected")
+					fire = false;
+					exploded = intersects[0].object;
+					shatter(exploded);
+				}
+
+			}
+
+			function onWindowResize()
+			{
+
+				SCREEN_WIDTH = window.innerWidth;
+				SCREEN_HEIGHT = window.innerHeight;
+
+				renderer.setSize( SCREEN_WIDTH, SCREEN_HEIGHT );
+
+				camera.aspect = SCREEN_WIDTH / SCREEN_HEIGHT;
+				camera.updateProjectionMatrix();
+
+				render();
+
+			}
+
+			// USER INTERFACE CONFIG
+			function addUI()
+			{
+
+				uiCont = {
+					numPots : 10,
+					Tesl8: 3,
+					shading: "glossy"
+				};
+
+				var h;
+
+				var gui = new dat.GUI();
+
+				h = gui.addFolder( "Teapot Control" );
+				h.add( uiCont, "Tesl8", 1, 5, 3 ).step(1).name( "Tessellation" ).onChange( newTeapot );
+				// shading
+				h.add( uiCont, "shading", [ "wireframe", "glossy"] ).name( "Shading" ).onChange( newTeapot );
+
+				h = gui.add(uiCont, "numPots", 1,200, 10).step(1).name("# of Teapots").onChange(newTeapot);
+
+			}
+
+			function animate()
+			{
+				//exploded.geometry.verticesNeedUpdate=true;
+				requestAnimationFrame( animate );
+				TWEEN.update();
+				render();
+				controls.update();
+			}
+			//
+
+			function render()
+			{
+				updateTeapots();
+				renderer.render( scene, camera );
+			}
+
+			// this should also be a member of the teapot class
+			function shatter(selected)
+			{
+				//console.log("--shatter() starting");
+
+        var geo = selected.geometry;
+				var faces = geo.faces.length;
+				//console.log("-should have a list of faces :"+faces);
+				//console.log("random relocation point:"+final)
+
+				var pos = new THREE.Vector3();
+
+        for(var i = 0; i < geo.faces.length; i++)
+        {
+					//console.log("-creating tween for face :"+i);
+        	//TWEEN.removeAll();
+
+        	var final = Math.random() * 4000;
+
+					var a = geo.faces[i].a;
+					var b = geo.faces[i].b;
+					var c = geo.faces[i].c;
+					pos.x = geo.faces[i].normal.x * final;
+					pos.y = geo.faces[i].normal.y * final;
+					pos.z = geo.faces[i].normal.z * final;
+
+					tweenVert(geo, geo.vertices[a], pos);
+					tweenVert(geo, geo.vertices[b], pos);
+					tweenVert(geo, geo.vertices[c], pos);
+        }
+
+				new TWEEN.Tween( selected.position ).to( {x: selected.position.x,	y: selected.position.y,	z: selected.position.z},500)
+					.repeat(1)
+					.yoyo(true)
+					.easing( TWEEN.Easing.Exponential.Out).onComplete(function() {
+						//console.log('tweening done!')
+						fire = true;
+					}).start();
+			}
+
+			function tweenVert(geo, vert, pos)
+			{
+				var tween = new TWEEN.Tween(vert);
+				tween.to( { x: pos.x, y: pos.y, z: pos.z }, 900 );
+				tween.repeat(1);
+				tween.yoyo(true);
+				tween.easing( TWEEN.Easing.Exponential.InOut );
+				tween.onUpdate(function(){geo.verticesNeedUpdate=true;});
+				tween.start();
+			}
+
+			function reload()
+			{
+  			//console.info('Removing all children...')
+  			for (let i = scene.children.length - 1; i >= 0 ; i--)
+				{
+    			let child = scene.children[ i ];
+
+    			if ( child !== light && child !== camera )
+					{
+      			scene.remove(child);
+    			}
+  			}
+			}
+
+			function updateTeapots()
+			{
+				var delta = clock.getDelta() * 60;
+
+				for ( var i = 0; i < scene.children.length; i ++ )
+				{
+					let pots = scene.children[ i ];
+					if ( pots !== light && pots !== camera )
+					{
+						pots.userData.velocity.multiplyScalar( 1 - ( 0.001 * delta ) );
+						pots.position.add( pots.userData.velocity );
+						if ( pots.position.x < - 30000 || pots.position.x > 30000 )
+						{
+							pots.position.x = THREE.Math.clamp( pots.position.x, - 30000, 30000 );
+							pots.userData.velocity.x = - pots.userData.velocity.x;
+						}
+						if ( pots.position.y < - 30000 || pots.position.y > 30000 )
+						{
+							pots.position.y = THREE.Math.clamp( pots.position.y, - 30000, 30000 );
+							pots.userData.velocity.y = - pots.userData.velocity.y;
+						}
+						if ( pots.position.z < - 30000 || pots.position.z > 30000 )
+						{
+							pots.position.z = THREE.Math.clamp( pots.position.z, - 30000, 30000 );
+							pots.userData.velocity.z = - pots.userData.velocity.z;
+						}
+						pots.rotation.x += pots.userData.velocity.x * 2 * delta;
+						pots.rotation.y += pots.userData.velocity.y * 2 * delta;
+						pots.rotation.z += pots.userData.velocity.z * 2 * delta;
+					}
+				}
+
+			}
+
+			// this should be a member of the teapot class
+			// Whenever the teapot changes, the scene is rebuilt from scratch (not much to it).
+			function newTeapot()
+			{
+				//console.log("--newTeapot() starting");
+
+				// remove all geometry from the scene
+				reload();
+
+				for ( var i = 1; i <= uiCont.numPots; i ++ )
+				{
+
+						var teapotBuffGeo = new THREE.TeapotBufferGeometry( teapotSize,
+							uiCont.Tesl8, true, true, true, true,	false );
+
+						var teapotGeo = new THREE.Geometry().fromBufferGeometry( teapotBuffGeo );
+
+						var explode = new THREE.ExplodeModifier();
+						explode.modify( teapotGeo );
+
+						var teapot = new THREE.Mesh( teapotGeo, uiCont.shading === "wireframe" ? wireMaterial : new THREE.MeshPhongMaterial( { color: Math.random() * 0xffffff, shading: THREE.SmoothShading, side: THREE.DoubleSide } ));
+
+						teapot.position.x = Math.random() * 10000 - 5000;
+						teapot.position.y = Math.random() * 10000 - 5000;
+						teapot.position.z = Math.random() * 10000 - 5000;
+						var scale = THREE.Math.clamp( Math.random(), 0.2, 1 );
+						teapot.scale.x = scale;
+						teapot.scale.y = scale + 0.1;
+						teapot.scale.z = scale;
+						teapot.rotation.x = Math.random() * 2 * Math.PI;
+						teapot.rotation.y = Math.random() * 2 * Math.PI;
+						teapot.rotation.z = Math.random() * 2 * Math.PI;
+
+						teapot.userData.velocity = new THREE.Vector3();
+						teapot.userData.velocity.x = Math.random() * 0.01 - 0.005;
+						teapot.userData.velocity.y = Math.random() * 0.01 - 0.005;
+						teapot.userData.velocity.z = Math.random() * 0.01 - 0.005;
+
+						scene.add(teapot);
+						exploded = teapot;
+					}
+			}
+
+		</script>
+
+	</body>
+</html>
